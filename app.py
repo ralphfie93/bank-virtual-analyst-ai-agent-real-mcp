@@ -34,7 +34,11 @@ if api_key:
 os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "FALSE")
 
 if not os.environ.get("GOOGLE_API_KEY"):
-    st.error("⚠️ GOOGLE_API_KEY is missing! Add it to Streamlit Secrets or environment variables.")
+    st.error(
+        "⚠️ **GOOGLE_API_KEY is missing!**\n\n"
+        "Go to Streamlit Cloud Dashboard: **App Settings** -> **Secrets** and add:\n"
+        "```toml\nGOOGLE_API_KEY = \"your_gemini_api_key_here\"\n```"
+    )
     st.stop()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -42,7 +46,7 @@ MCP_SERVER_SCRIPT = os.path.join(BASE_DIR, "mcp_db_server.py")
 DB_FILE = os.path.join(BASE_DIR, "bank11.sqlite")
 
 # ==============================================================================
-# 2. Live Schema Evolution Demo Helpers
+# 2. Live Schema Evolution Demo Helpers (Admin Controls)
 # ==============================================================================
 def execute_demo_migration():
     """Simulates a DBA migrating new tables into bank11.sqlite while app.py is running."""
@@ -193,8 +197,20 @@ with st.sidebar:
             st.rerun()
 
     st.markdown("---")
-    st.subheader("🧹 Session Controls")
-    if st.button("🗑️ Clear Conversation", use_container_width=True):
+    st.subheader("💡 Suggested Questions")
+    prompts = [
+        "What tables currently exist in the MCP server?",
+        "List all branches and the number of customers at each.",
+        "What is the total balance across all accounts?",
+        "What is the total credit limit across active credit cards?",
+        "delete the branches table"
+    ]
+    for p in prompts:
+        if st.button(p, use_container_width=True):
+            st.session_state.pending_prompt = p
+
+    st.markdown("---")
+    if st.button("🗑️ Clear Chat History", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
 
@@ -203,51 +219,41 @@ with st.sidebar:
         st.text(get_live_ddl())
 
 # ==============================================================================
-# 6. Main Interactive Console (100% Core Buttons — LocalTunnel Safe)
+# 6. Main Free-Text Chatroom Interface
 # ==============================================================================
 st.title("🏦 Virtual Banking Analyst (Real MCP Protocol)")
 st.caption("Zero SQLite code in app.py • Runtime JSON-RPC Discovery • Protocol-Enforced Least Privilege")
 
-st.subheader("🎯 Select an Analytical Query or Security Test")
-prompts = [
-    "What tables currently exist in the MCP server?",
-    "List all branches and the number of customers at each.",
-    "What is the total balance across all accounts?",
-    "What is the total credit limit across active credit cards?",
-    "delete the branches table"
-]
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        if msg.get("tools_used"):
+            st.caption("🔌 **MCP JSON-RPC Calls:** " + " → ".join(f"`{t}`" for t in msg["tools_used"]))
+        st.markdown(msg["content"])
 
 prompt_to_send = None
-col_a, col_b = st.columns(2)
-for idx, p in enumerate(prompts):
-    target_col = col_a if idx % 2 == 0 else col_b
-    with target_col:
-        if st.button(f"▶ {p}", key=f"q_{idx}", use_container_width=True):
-            prompt_to_send = p
-
-st.markdown("---")
+if "pending_prompt" in st.session_state and st.session_state.pending_prompt:
+    prompt_to_send = st.session_state.pending_prompt
+    st.session_state.pending_prompt = None
+else:
+    user_input = st.chat_input("Ask any question about branches, customers, accounts, or credit cards...")
+    if user_input:
+        prompt_to_send = user_input
 
 if prompt_to_send:
     st.session_state.messages.append({"role": "user", "content": prompt_to_send})
-    with st.spinner("Connecting to MCPServer over STDIO JSON-RPC..."):
-        reply_text, tools_used = asyncio.run(
-            run_true_mcp_turn(prompt_to_send, st.session_state.messages[:-1])
-        )
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": reply_text,
-            "tools_used": tools_used
-        })
-    st.rerun()
+    with st.chat_message("user"):
+        st.markdown(prompt_to_send)
 
-if not st.session_state.messages:
-    st.info("Click any query button above to trigger a live MCP JSON-RPC handshake with `mcp_db_server.py`.")
-else:
-    for msg in reversed(st.session_state.messages):
-        if msg["role"] == "user":
-            st.markdown(f"### 🧑 Query: *{msg['content']}*")
-        else:
-            if msg.get("tools_used"):
-                st.caption("🔌 **MCP JSON-RPC Calls:** " + " → ".join(f"`{t}`" for t in msg["tools_used"]))
-            st.markdown(msg["content"])
-            st.markdown("---")
+    with st.chat_message("assistant"):
+        with st.spinner("Connecting to MCPServer over STDIO JSON-RPC..."):
+            reply_text, tools_used = asyncio.run(
+                run_true_mcp_turn(prompt_to_send, st.session_state.messages[:-1])
+            )
+            if tools_used:
+                st.caption("🔌 **MCP JSON-RPC Calls:** " + " → ".join(f"`{t}`" for t in tools_used))
+            st.markdown(reply_text)
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": reply_text,
+                "tools_used": tools_used
+            })
