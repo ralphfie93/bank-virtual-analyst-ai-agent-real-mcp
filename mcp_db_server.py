@@ -9,7 +9,6 @@ try:
 except ImportError:
     from mcp.server.fastmcp import FastMCP as MCPServer
 
-# Initialize the official MCP Server
 mcp = MCPServer("BankingSQLiteMCPServer")
 
 DB_FILE = sys.argv[1] if len(sys.argv) > 1 else "bank11.sqlite"
